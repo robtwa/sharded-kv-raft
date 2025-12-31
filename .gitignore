@@ -1,0 +1,11 @@
+pkg/
+api.key
+*-handin.tar.gz
+
+
+*.log
+.DS_Store
+.vscode/
+.env
+.idea/
+*.iml
