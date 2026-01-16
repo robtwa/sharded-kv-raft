@@ -78,6 +78,7 @@ type TaskAction int
 const (
 	ToWait TaskAction = iota
 	ToRun
+	ToExit
 )
 
 type Task struct {
@@ -92,14 +93,22 @@ const TIMEOUT = 10 * time.Second
 
 // GetTask is an RPC handler that assigns tasks to workers.
 func (m *Master) GetTask(_ *Void, reply *Task) error {
-	reply.Action = ToWait // Default to ToWait
+	m.Mutex.Lock()
+	defer m.Mutex.Unlock()
+
+	// If all tasks are done, instruct the worker to exit.
+	if m.Phase == Done {
+		reply.Action = ToExit
+		return nil
+	}
+	// Default action is to wait.
+	reply.Action = ToWait
 
 	// Assign tasks based on the current phase.
 	if m.Phase == MapPhase { // Map phase
 		// Iterate over Map tasks to find a pending one.
 		for _, task := range m.MapTasks {
 			now := time.Now()
-			m.Mutex.Lock() // Lock the mutex to safely access task state.
 			// Reassign task if it has timed out.
 			if task.State == Running && task.StartTime.Add(TIMEOUT).Before(now) {
 				task.State = Pending
@@ -112,9 +121,6 @@ func (m *Master) GetTask(_ *Void, reply *Task) error {
 				task.State = Running
 				task.StartTime = now
 
-				// Release the mutex after updating the task.
-				m.Mutex.Unlock()
-
 				// Prepare the reply with task details.
 				reply.IsMap = true
 				reply.Map = *task
@@ -123,14 +129,11 @@ func (m *Master) GetTask(_ *Void, reply *Task) error {
 
 				return nil
 			}
-			m.Mutex.Unlock()
 		}
 	} else if m.Phase == ReducePhase { // Reduce phase
 		// Iterate over Reduce tasks to find a pending one.
 		for _, task := range m.ReduceTasks {
 			now := time.Now()
-			m.Mutex.Lock() // Lock the mutex to safely access task state.
-
 			// Reassign task if it has timed out.
 			if task.State == Running && task.StartTime.Add(TIMEOUT).Before(now) {
 				task.State = Pending
@@ -151,9 +154,6 @@ func (m *Master) GetTask(_ *Void, reply *Task) error {
 					task.IFiles = append(task.IFiles, fn)
 				}
 
-				// Release the mutex after updating the task.
-				m.Mutex.Unlock()
-
 				// Prepare the reply with task details.
 				reply.Action = ToRun
 				reply.IsMap = false
@@ -161,7 +161,6 @@ func (m *Master) GetTask(_ *Void, reply *Task) error {
 				reply.Reduce = *task
 				return nil
 			}
-			m.Mutex.Unlock()
 		}
 	}
 	return nil
@@ -169,6 +168,8 @@ func (m *Master) GetTask(_ *Void, reply *Task) error {
 
 // Complete is an RPC handler that marks tasks as finished.
 func (m *Master) Complete(args *CompleteArgs, _ *Void) error {
+	m.Mutex.Lock()
+	defer m.Mutex.Unlock()
 	// Update task state based on whether it's a Map or Reduce task.
 	if args.IsMap {
 		// If the received task is a Map task:

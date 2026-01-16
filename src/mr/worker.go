@@ -69,6 +69,11 @@ func Worker(mapf MapF, reducef ReduceF) {
 		// Call the GetTask RPC on the Master to request a task.
 		call("Master.GetTask", &Void{}, &task)
 
+		if task.Action == ToExit {
+			// Case 0: All tasks are done; worker should exit.
+			return
+		}
+
 		// Case 1: No task assigned; worker should wait.
 		if task.Action == ToWait {
 			continue
